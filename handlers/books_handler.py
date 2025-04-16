@@ -11,6 +11,7 @@ import ssl
 import re
 import os
 import tempfile
+from urllib.parse import urljoin
 
 # تعطيل تحذيرات SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -79,7 +80,7 @@ async def handle_books(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         # الحصول على VIEWSTATE وغيرها من القيم
         print("\n=== جاري الحصول على صفحة تسجيل الدخول... ===")
-        login_page = session.get(LOGIN_URL, headers=headers)
+        login_page = session.get(LOGIN_URL)
         print(f"حالة صفحة تسجيل الدخول: {login_page.status_code}")
         
         soup = BeautifulSoup(login_page.text, 'html.parser')
@@ -114,7 +115,7 @@ async def handle_books(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         
         # محاولة تسجيل الدخول
         logging.info("Attempting login...")
-        login_response = session.post(LOGIN_URL, data=login_data, headers=headers)
+        login_response = session.post(LOGIN_URL, data=login_data,)
         logging.info(f"Login response status: {login_response.status_code}")
         print(f"\n=== حالة استجابة تسجيل الدخول: {login_response.status_code} ===")
         print(f"URL بعد تسجيل الدخول: {login_response.url}")
@@ -124,22 +125,8 @@ async def handle_books(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         print(f"Cookies: {dict(login_response.cookies)}")
         print(f"Set-Cookie header: {login_response.headers.get('Set-Cookie')}")
 
-        # استخراج الـ cookies من الاستجابة
-        session_id = None
-        for cookie in login_response.cookies:
-            if cookie.name == 'ASP.NET_SessionId':
-                session_id = cookie.value
-                break
-
-        if session_id:
-            headers['Cookie'] = f"ASP.NET_SessionId={session_id}"
-            print(f"\n=== تم استخراج الـ Session ID: {session_id} ===")
-        else:
-            print("\n=== لم يتم العثور على ASP.NET_SessionId في الـ cookies ===")
-
-        # حفظ الجلسة والـ headers في user_sessions
+        # حفظ الجلسة في user_sessions
         user_sessions[user.id]['session'] = session
-        user_sessions[user.id]['headers'] = headers
         
         # تحديث الـ Referer للصفحات التالية
         headers['Referer'] = 'https://tdb.tanta.edu.eg/ebooks/StudHome.aspx'
@@ -150,7 +137,7 @@ async def handle_books(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             print("\n=== تم تسجيل الدخول بنجاح، جاري جلب الكتب... ===")
             
             # الحصول على صفحة الكتب
-            home_page = session.get(HOME_URL, headers=headers)
+            home_page = session.get(HOME_URL)
             books_soup = BeautifulSoup(home_page.text, 'html.parser')
             
             # استخراج أسماء المواد وروابطها
@@ -178,7 +165,8 @@ async def handle_books(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                                     subject_id = postback_match.group(1)
                                     print(f"معرف المادة: {subject_id}")
                                     keyboard.append([InlineKeyboardButton(title, callback_data=f"book_{subject_id}")])
-                                    break  # نخرج من الحلقة بعد العثور على الرابط الأول
+                                    break
+                                      # نخرج من الحلقة بعد العثور على الرابط الأول
                         
                 if keyboard:
                     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -220,10 +208,10 @@ async def handle_books(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
 
 async def handle_book_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle book selection callback."""
+    """Handle book selection callback and download book directly."""
     query = update.callback_query
     await query.answer()
-    
+    print(f"data:{query.data}")
     subject_id = query.data.replace("book_", "")
     print(f"\n=== معرف المادة: {subject_id} ===")
     
@@ -238,92 +226,17 @@ async def handle_book_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         session = user_data.get('session')
         
         if not session:
-            # إنشاء جلسة جديدة إذا لم تكن موجودة
-            session = requests.Session()
-            session.verify = False
-            
-            # إضافة الـ headers المطلوبة
-            headers = {
-                'Host': 'tdb.tanta.edu.eg',
-                'Cache-Control': 'max-age=0',
-                'Sec-Ch-Ua': '"Brave";v="135", "Not-A.Brand";v="8", "Chromium";v="135"',
-                'Sec-Ch-Ua-Mobile': '?0',
-                'Sec-Ch-Ua-Platform': '"Windows"',
-                'Upgrade-Insecure-Requests': '1',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-                'Origin': 'https://tdb.tanta.edu.eg',
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                'Sec-Gpc': '1',
-                'Accept-Language': 'en-US,en;q=0.8',
-                'Sec-Fetch-Site': 'same-origin',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-User': '?1',
-                'Sec-Fetch-Dest': 'document',
-                'Referer': 'https://tdb.tanta.edu.eg/ebooks/StudHome.aspx',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Priority': 'u=0, i'
-            }
-            
-            # تسجيل الدخول للحصول على الـ cookies
-            login_page = session.get(LOGIN_URL, headers=headers)
-            soup = BeautifulSoup(login_page.text, 'html.parser')
-            
-            viewstate = soup.find('input', {'name': '__VIEWSTATE'})['value']
-            viewstategenerator = soup.find('input', {'name': '__VIEWSTATEGENERATOR'})['value']
-            eventvalidation = soup.find('input', {'name': '__EVENTVALIDATION'})['value']
-            
-            login_data = {
-                '__EVENTTARGET': '',
-                '__EVENTARGUMENT': '',
-                '__VIEWSTATE': viewstate,
-                '__VIEWSTATEGENERATOR': viewstategenerator,
-                '__SCROLLPOSITIONX': '0',
-                '__SCROLLPOSITIONY': '0',
-                '__EVENTVALIDATION': eventvalidation,
-                'DDLFaculty': '8',
-                'txtStudSSN': user_data['ssn'],
-                'txtStudPW': user_data['password'],
-                'loginButton': 'دخول'
-            }
-            
-            login_response = session.post(LOGIN_URL, data=login_data, headers=headers)
-            
-            # طباعة الـ cookies المستخرجة للتحقق
-            print("\n=== الـ Cookies المستخرجة ===")
-            print(f"Cookies: {login_response.cookies}")
-            print(f"Set-Cookie header: {login_response.headers.get('Set-Cookie')}")
-            
-            # استخراج الـ cookies من الاستجابة
-            session_id = None
-            for cookie in login_response.cookies:
-                if cookie.name == 'ASP.NET_SessionId':
-                    session_id = cookie.value
-                    break
-            
-            if session_id:
-                headers['Cookie'] = f"ASP.NET_SessionId={session_id}"
-                print(f"\n=== تم استخراج الـ Session ID: {session_id} ===")
-            else:
-                print("\n=== لم يتم العثور على ASP.NET_SessionId في الـ cookies ===")
-            
-            # تخزين الجلسة في user_sessions
-            user_sessions[query.from_user.id]['session'] = session
-            user_sessions[query.from_user.id]['headers'] = headers
+            await query.message.edit_text("❌ يجب عليك تسجيل الدخول مرة أخرى")
+            return
         
         # الحصول على صفحة الكتب للحصول على القيم المطلوبة
-        home_page = session.get(HOME_URL, headers=user_sessions[query.from_user.id]['headers'])
+        home_page = session.get(HOME_URL)
         soup = BeautifulSoup(home_page.text, 'html.parser')
         
         # استخراج القيم المطلوبة
         viewstate = soup.find('input', {'name': '__VIEWSTATE'})['value']
         viewstategenerator = soup.find('input', {'name': '__VIEWSTATEGENERATOR'})['value']
         eventvalidation = soup.find('input', {'name': '__EVENTVALIDATION'})['value']
-        
-        print("\n=== القيم المستخرجة من الصفحة ===")
-        print(f"VIEWSTATE: {viewstate[:100]}...")
-        print(f"VIEWSTATEGENERATOR: {viewstategenerator}")
-        print(f"EVENTVALIDATION: {eventvalidation[:100]}...")
         
         # تجهيز بيانات الطلب
         post_data = {
@@ -337,170 +250,125 @@ async def handle_book_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             'hdnBookTotalPrices': ''
         }
         
-        print("\n=== بيانات الطلب ===")
-        print(json.dumps(post_data, indent=2, ensure_ascii=False))
-        
-        # إرسال الطلب
-        response = session.post(HOME_URL, data=post_data, headers=user_sessions[query.from_user.id]['headers'])
+        # إرسال الطلب للانتقال لصفحة المادة
+        response = session.post(HOME_URL, data=post_data)
         print(f"\n=== حالة الاستجابة: {response.status_code} ===")
         print(f"URL النهائي: {response.url}")
-        print("\n=== محتوى الصفحة ===")
-        print(response.text[:1000])  # طباعة أول 1000 حرف من محتوى الصفحة
         
         if response.url == COURSE_URL:
             # تم الانتقال إلى صفحة المادة بنجاح
             course_soup = BeautifulSoup(response.text, 'html.parser')
-            
             # البحث عن روابط الكتب
             book_links = course_soup.find_all('a', href=lambda x: x and 'javascript:__doPostBack' in x)
             print(f"\n=== عدد روابط الكتب المستخرجة: {len(book_links)} ===")
             
             if book_links:
-                keyboard = []
+                # تحميل كل الكتب المتاحة في المادة مع تجاهل LinkButton1
+                first_sent = False
                 for link in book_links:
-                    # استخراج معرف الكتاب من الرابط
                     postback_match = re.search(r"__doPostBack\('([^']+)'", link['href'])
                     if postback_match:
                         book_id = postback_match.group(1)
-                        # استخراج اسم الكتاب من النص
-                        book_name = link.text.strip()
-                        print(f"معرف الكتاب: {book_id}")
-                        print(f"اسم الكتاب: {book_name}")
-                        
-                        # تجاهل زر تسجيل الخروج
-                        if book_id != "LinkButton1":
-                            keyboard.append([InlineKeyboardButton(book_name, callback_data=f"download_{book_id}")])
-                
-                if keyboard:
-                    reply_markup = InlineKeyboardMarkup(keyboard)
-                    await query.message.edit_text(
-                        "📚 الكتب المتاحة في المادة:",
-                        reply_markup=reply_markup
-                    )
-                else:
-                    print("\n=== لم يتم العثور على كتب متاحة ===")
-                    await query.message.edit_text("❌ لم يتم العثور على كتب متاحة في هذه المادة")
+                        if book_id == "LinkButton1":
+                            continue  # تجاهل هذا الكتاب ولا تحمله
+                        # استخراج القيم المطلوبة من صفحة المادة (يجب تحديثها كل مرة)
+                        viewstate = course_soup.find('input', {'name': '__VIEWSTATE'})['value']
+                        viewstategenerator = course_soup.find('input', {'name': '__VIEWSTATEGENERATOR'})['value']
+                        eventvalidation = course_soup.find('input', {'name': '__EVENTVALIDATION'})['value']
+                        post_data = {
+                            '__EVENTTARGET': book_id,
+                            '__EVENTARGUMENT': '',
+                            '__VIEWSTATE': viewstate,
+                            '__VIEWSTATEGENERATOR': viewstategenerator,
+                            '__SCROLLPOSITIONX': '0',
+                            '__SCROLLPOSITIONY': '0',
+                            '__VIEWSTATEENCRYPTED': '',
+                            '__EVENTVALIDATION': eventvalidation
+                        }
+                        headers = {
+                            'Host': 'tdb.tanta.edu.eg',
+                            'Connection': 'keep-alive',
+                            'Cache-Control': 'max-age=0',
+                            'Upgrade-Insecure-Requests': '1',
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+                            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                            'Sec-Fetch-Site': 'same-origin',
+                            'Sec-Fetch-Mode': 'navigate',
+                            'Sec-Fetch-User': '?1',
+                            'Sec-Fetch-Dest': 'document',
+                            'Referer': COURSE_URL,
+                            'Accept-Encoding': 'gzip, deflate, br',
+                            'Accept-Language': 'en-US,en;q=0.9',
+                            'Content-Type': 'application/x-www-form-urlencoded'
+                        }
+                        # تحديث رسالة المستخدم مرة واحدة فقط قبل أول تحميل
+                        if not first_sent:
+                            await query.message.edit_text("⏳ جاري تحميل الكتب...")
+                            first_sent = True
+                        # إرسال الطلب لتحميل الكتاب
+                        book_response = session.post(COURSE_URL, data=post_data, headers=headers)
+                        print(f'{book_response.text}')
+                        print(f'{post_data}')
+                        content_type = book_response.headers.get('Content-Type', '')
+                        if 'application/pdf' in content_type:
+                            content_disposition = book_response.headers.get('Content-Disposition', '')
+                            file_name = "book.pdf"
+                            if 'filename=' in content_disposition:
+                                file_name = content_disposition.split('filename=')[1].strip('"')
+                                # تنظيف اسم الملف من الرموز غير الصالحة
+                                file_name = re.sub(r'[\\/*?:"<>|]', "", file_name)
+                            with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{file_name}") as temp_file:
+                                temp_file.write(book_response.content)
+                                temp_file_path = temp_file.name
+                            with open(temp_file_path, 'rb') as file:
+                                await context.bot.send_document(
+                                    chat_id=query.from_user.id,
+                                    document=file,
+                                    filename=file_name,
+                                    caption=f"📚 تم تحميل الكتاب: {link.text.strip()}"
+                                )
+                            os.unlink(temp_file_path)
+                        else:
+                            soup2 = BeautifulSoup(book_response.text, 'html.parser')
+                            download_link = soup2.find('a', {'id': lambda x: x and x.endswith('LinkButton2')})
+                            if download_link and download_link.get('href'):
+                                file_url = urljoin(COURSE_URL, download_link['href'])
+                                file_response = session.get(file_url, headers=headers)
+                                with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+                                    temp_file.write(file_response.content)
+                                    temp_path = temp_file.name
+                                with open(temp_path, 'rb') as file:
+                                    await context.bot.send_document(
+                                        chat_id=query.from_user.id,
+                                        document=file,
+                                        filename='book.pdf',
+                                        caption=f"📚 تم تحميل الكتاب: {link.text.strip()}"
+                                    )
+                                os.unlink(temp_path)
+                            else:
+                                await context.bot.send_message(
+                                    chat_id=query.from_user.id,
+                                    text=f"❌ لم يتم العثور على رابط التحميل للكتاب: {link.text.strip()}"
+                                )
+                # بعد الانتهاء من إرسال كل الكتب، أرسل رسالة جديدة بدلاً من تعديل نفس الرسالة
+                await context.bot.send_message(
+                    chat_id=query.from_user.id,
+                    text="✅ تم تحميل جميع الكتب المتاحة!\nاختر مادة أخرى أو عد للقائمة الرئيسية:",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")
+                    ]])
+                )
             else:
-                print("\n=== لم يتم العثور على روابط JavaScript للكتب ===")
                 await query.message.edit_text("❌ لم يتم العثور على كتب متاحة في هذه المادة")
         else:
-            print("\n=== فشل الانتقال إلى صفحة المادة ===")
             await query.message.edit_text("❌ حدث خطأ أثناء محاولة فتح صفحة المادة")
-            
+        
     except Exception as e:
         print(f"\n=== خطأ: {str(e)} ===")
-        logging.error(f"Error during book selection: {str(e)}")
-        await query.message.edit_text("❌ حدث خطأ أثناء محاولة فتح صفحة المادة")
-
-async def handle_download_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle book download callback."""
-    query = update.callback_query
-    await query.answer()
-    
-    book_id = query.data.replace("download_", "")
-    print(f"\n=== معرف الكتاب: {book_id} ===")
-    
-    try:
-        # الحصول على جلسة المستخدم
-        if query.from_user.id not in user_sessions:
-            await query.message.edit_text("❌ يجب عليك تسجيل الدخول أولاً")
-            return
-            
-        # استخدام الجلسة المخزنة للمستخدم
-        user_data = user_sessions[query.from_user.id]
-        session = user_data.get('session')
-        headers = user_data.get('headers', {})
-        
-        if not session or not headers:
-            await query.message.edit_text("❌ يجب عليك تسجيل الدخول مرة أخرى")
-            return
-        
-        # الحصول على صفحة المادة للحصول على القيم المطلوبة
-        print("\n=== جاري الحصول على صفحة المادة... ===")
-        course_page = session.get(COURSE_URL, headers=headers)
-        print(f"حالة صفحة المادة: {course_page.status_code}")
-        
-        soup = BeautifulSoup(course_page.text, 'html.parser')
-        
-        # استخراج القيم المطلوبة
-        viewstate = soup.find('input', {'name': '__VIEWSTATE'})['value']
-        viewstategenerator = soup.find('input', {'name': '__VIEWSTATEGENERATOR'})['value']
-        eventvalidation = soup.find('input', {'name': '__EVENTVALIDATION'})['value']
-        
-        print("\n=== القيم المستخرجة من الصفحة ===")
-        print(f"VIEWSTATE: {viewstate[:100]}...")
-        print(f"VIEWSTATEGENERATOR: {viewstategenerator}")
-        print(f"EVENTVALIDATION: {eventvalidation[:100]}...")
-        
-        # تجهيز بيانات الطلب
-        post_data = {
-            '__EVENTTARGET': book_id,
-            '__EVENTARGUMENT': '',
-            '__VIEWSTATE': viewstate,
-            '__VIEWSTATEGENERATOR': viewstategenerator,
-            '__SCROLLPOSITIONX': '0',
-            '__SCROLLPOSITIONY': '0',
-            '__VIEWSTATEENCRYPTED': '',
-            '__EVENTVALIDATION': eventvalidation
-        }
-        
-        print("\n=== بيانات الطلب ===")
-        print(json.dumps(post_data, indent=2, ensure_ascii=False))
-        
-        # إرسال الطلب
-        print("\n=== جاري إرسال طلب التحميل... ===")
-        print("Headers:", headers)
-        print("URL:", COURSE_URL)
-        print("Post Data:", post_data)
-        
-        response = session.post(COURSE_URL, data=post_data, headers=user_sessions[query.from_user.id]['headers'])
-        print(f"حالة الاستجابة: {response.status_code}")
-        print(f"URL النهائي: {response.url}")
-        print(f"Headers: {dict(response.headers)}")
-        
-        # التحقق من نوع المحتوى في الاستجابة
-        content_type = response.headers.get('Content-Type', '')
-        print(f"نوع المحتوى: {content_type}")
-        
-        if 'application/pdf' in content_type:
-            # الاستجابة تحتوي على ملف PDF مباشرة
-            print("\n=== تم العثور على ملف PDF مباشرة في الاستجابة ===")
-            
-            # استخراج اسم الملف من رأس Content-Disposition
-            content_disposition = response.headers.get('Content-Disposition', '')
-            print(f"Content-Disposition: {content_disposition}")
-            
-            file_name = "book.pdf"  # اسم افتراضي
-            if 'filename=' in content_disposition:
-                file_name = content_disposition.split('filename=')[1].strip('"')
-            
-            print(f"اسم الملف: {file_name}")
-            
-            # حفظ الملف مؤقتاً
-            with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{file_name}") as temp_file:
-                temp_file.write(response.content)
-                temp_file_path = temp_file.name
-                print(f"تم حفظ الملف مؤقتاً في: {temp_file_path}")
-            
-            # إرسال الملف للمستخدم
-            with open(temp_file_path, 'rb') as file:
-                await query.message.reply_document(
-                    document=file,
-                    filename=file_name,
-                    caption="📚 تم تحميل الكتاب بنجاح"
-                )
-            
-            # حذف الملف المؤقت
-            os.unlink(temp_file_path)
-            print("تم حذف الملف المؤقت")
-        else:
-            # الاستجابة لا تحتوي على ملف PDF
-            print("\n=== الاستجابة لا تحتوي على ملف PDF ===")
-            print("محتوى الصفحة:")
-            print(response.text[:1000])  # طباعة أول 1000 حرف من محتوى الصفحة
-            await query.message.edit_text("❌ عذراً، الملف غير موجود")
-            
-    except Exception as e:
-        print(f"\n=== خطأ: {str(e)} ===")
-        logging.error(f"Error during book download: {str(e)}")
-        await query.message.edit_text("❌ حدث خطأ أثناء محاولة تحميل الكتاب") 
+        logging.error(f"Error during book selection/download: {str(e)}")
+        await query.message.edit_text(
+            "❌ حدث خطأ أثناء محاولة تحميل الكتاب",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")
+            ]])
+        )

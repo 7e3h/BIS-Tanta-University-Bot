@@ -1,5 +1,7 @@
-python-telegram-bot==20.8
+python-telegram-bot==20.7
+python-dotenv==1.0.0
 requests==2.31.0
-beautifulsoup4==4.12.3
-python-dotenv==1.0.1
-urllib3==2.2.1 
+beautifulsoup4==4.12.2
+python-jose==3.3.0 
+urllib3==2.2.1
+bs4==0.0.1

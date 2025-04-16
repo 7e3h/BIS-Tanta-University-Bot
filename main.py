@@ -299,7 +299,10 @@ def main() -> None:
 
     # Add callback query handlers for books
     application.add_handler(CallbackQueryHandler(handle_book_callback, pattern="^book_"))
+
+    # Add callback query handler for downloads (should be last)
     application.add_handler(CallbackQueryHandler(handle_download_callback, pattern="^download_"))
+
 
     # Start the Bot
     application.run_polling()
